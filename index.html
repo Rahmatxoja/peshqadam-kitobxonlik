@@ -16,6 +16,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preload" as="image" href="cover.webp" type="image/webp">
 
     <style>
         :root {
@@ -114,6 +115,42 @@
             overflow: hidden;
             position: relative;
             box-shadow: 0 0 25px rgba(0,0,0,0.18);
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            contain: layout paint;
+            will-change: transform;
+        }
+
+        /* Hardware GPU Acceleration & Compositing for Android & iOS */
+        .page-content,
+        .stf__item,
+        .stf__block,
+        .cover-img,
+        .club-illustration {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            will-change: transform;
+        }
+
+        .page-content {
+            contain: layout style;
+        }
+
+        /* Prevent 300ms touch delay and speed up tap response on mobile */
+        .btn-open-book,
+        .page-footer,
+        .btn-confirm,
+        .share-tg-btn,
+        .back-cta-btn,
+        .back-tg-btn,
+        .powered-by-artco,
+        .close-x,
+        .form-box {
+            touch-action: manipulation;
         }
 
         /* Full bleed cover image container */
@@ -785,13 +822,14 @@
             z-index: 100;
             opacity: 0;
             pointer-events: none;
+            display: none;
             transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px 16px;
         }
         .modal-shade.active {
+            display: flex;
             opacity: 1;
             pointer-events: auto;
         }
@@ -940,7 +978,7 @@
     <div class="ambient-canvas"></div>
 
     <!-- Sokin Fon Musiqasi (Ekvalayzer/belgilar yo'q, sof mayin fon musiqasi) -->
-    <audio id="bgMusic" src="background.mp3" preload="auto" loop></audio>
+    <audio id="bgMusic" src="background.mp3" preload="metadata" loop></audio>
 
     <div class="app-shell" id="appShell">
         
@@ -950,7 +988,10 @@
 
                 <!-- PAGE 0: FRONT COVER (HARDCOVER - FULL BLEED) -->
                 <div class="page page-cover" data-density="hard">
-                    <img src="cover.jpg" alt="Kitobsevarlar Klubi" class="cover-img">
+                    <picture>
+                        <source srcset="cover.webp" type="image/webp">
+                        <img src="cover.jpg" alt="Kitobsevarlar Klubi" class="cover-img" fetchpriority="high" decoding="async">
+                    </picture>
                     <div class="cover-overlay">
                         <div class="btn-open-book" id="openBookTrigger">
                             <div class="btn-open-arrow">
@@ -1093,7 +1134,10 @@
 
                         <!-- Erkin, romsiz, tabiiy badiiy rasm -->
                         <div class="illustration-wrap">
-                            <img src="club_meeting_art.png" alt="Kitobsevarlar klubi ayollar davrasi" class="club-illustration">
+                            <picture>
+                                <source srcset="club_meeting_art.webp" type="image/webp">
+                                <img src="club_meeting_art.png" alt="Kitobsevarlar klubi ayollar davrasi" class="club-illustration" loading="eager" decoding="async">
+                            </picture>
                         </div>
 
                         <!-- Bet raqami va varaqlash ishorasi (Tugmasiz oddiy yozuv) -->
@@ -1177,7 +1221,10 @@
 
                 <!-- PAGE 5: BACK COVER (HARDCOVER - FULL BLEED) -->
                 <div class="page page-cover" data-density="hard">
-                    <img src="cover_back.jpg" alt="Kitobsevarlar Klubi" class="cover-img">
+                    <picture>
+                        <source srcset="cover_back.webp" type="image/webp">
+                        <img src="cover_back.jpg" alt="Kitobsevarlar Klubi" class="cover-img" loading="eager" decoding="async">
+                    </picture>
                     <div class="back-cover-overlay">
                         <!-- Peshqadam uchun maxsus chiroyli oltin kitob belgisi (emoji emas) -->
                         <div class="back-book-icon">
@@ -1362,11 +1409,12 @@
                 showCover: true,
                 usePortrait: true,
                 mobileScrollSupport: false,
-                maxShadowOpacity: 0.65,
-                flippingTime: 900,
+                maxShadowOpacity: 0.38,
+                flippingTime: 580,
                 drawShadow: true,
                 useMouseEvents: true,
-                clickEventForward: true
+                clickEventForward: true,
+                swipeDistance: 20
             });
 
             pageFlip.loadFromHTML(document.querySelectorAll('.page'));
@@ -1392,9 +1440,22 @@
             // Periodic realistic 3D corner curl hint (varaqlash uchun burchak qimirlashi)
             let cornerPulseTimer = null;
             let isCornerCurled = false;
+            let isUserInteracting = false;
+
+            function cancelCornerHint() {
+                if (isCornerCurled && window.pageFlip) {
+                    try {
+                        const fc = window.pageFlip.getFlipController();
+                        if (fc && window.pageFlip.getState && window.pageFlip.getState() === 'fold_corner') {
+                            fc.showCorner({ x: 0, y: 0 });
+                        }
+                    } catch(e) {}
+                    isCornerCurled = false;
+                }
+            }
 
             function pulseCornerHint() {
-                if (!window.pageFlip) return;
+                if (!window.pageFlip || isUserInteracting) return;
                 const curPage = pageFlip.getCurrentPageIndex();
                 const totalPages = pageFlip.getPageCount();
                 
@@ -1409,26 +1470,40 @@
                 if (!fc || !rect) return;
 
                 // 1. Gently curl up the corner
-                fc.showCorner({ x: rect.pageWidth - 25, y: rect.height - 25 });
                 isCornerCurled = true;
+                fc.showCorner({ x: rect.pageWidth - 25, y: rect.height - 25 });
 
-                // 2. Uncurl after 1.4s
+                // 2. Uncurl after 850ms
                 setTimeout(() => {
                     if (isCornerCurled && pageFlip.getState && pageFlip.getState() === 'fold_corner') {
                         fc.showCorner({ x: 0, y: 0 });
                         isCornerCurled = false;
                     }
-                }, 1400);
+                }, 850);
             }
 
-            // Pulse every 5 seconds
-            cornerPulseTimer = setInterval(pulseCornerHint, 5000);
+            // Immediately cancel and reset corner hint on any user touch so it NEVER blocks page turn
+            ['touchstart', 'touchmove', 'pointerdown', 'mousedown'].forEach(evt => {
+                container.addEventListener(evt, () => {
+                    isUserInteracting = true;
+                    cancelCornerHint();
+                }, { passive: true, capture: true });
+            });
 
-            // Also pulse 2.2s after user turns to a new page
+            ['touchend', 'touchcancel', 'pointerup', 'mouseup'].forEach(evt => {
+                container.addEventListener(evt, () => {
+                    setTimeout(() => { isUserInteracting = false; }, 800);
+                }, { passive: true });
+            });
+
+            // Pulse every 6 seconds
+            cornerPulseTimer = setInterval(pulseCornerHint, 6000);
+
+            // Also pulse 2.5s after user turns to a new page
             pageFlip.on('flip', (e) => {
-                isCornerCurled = false;
+                cancelCornerHint();
                 clearTimeout(window._nextCornerTimeout);
-                window._nextCornerTimeout = setTimeout(pulseCornerHint, 2200);
+                window._nextCornerTimeout = setTimeout(pulseCornerHint, 2500);
             });
 
             // Page turn hint click handlers
